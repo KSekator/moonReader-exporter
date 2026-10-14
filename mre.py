@@ -20,9 +20,13 @@ import subprocess
 import re
 import time
 import json
-import platform
 import datetime
 import warnings
+
+BOOKS_DIR = "/sdcard/Books/"
+OS_WINDOWS = os.name == 'nt'
+BINARY_NAME = "adb.exe" if OS_WINDOWS else "adb"
+ADB_REL = os.path.join("adb", BINARY_NAME)
 
 # =========================================================
 # CLASS: CONFIGURATION MANAGER
@@ -33,15 +37,12 @@ class ConfigManager:
         self.script_dir = script_dir
         self.config_path = os.path.join(script_dir, "mre.json")
         
-        # Calculate default relative paths for a portable setup
-        binary_name = "adb.exe" if os.name == 'nt' else "adb"
-        default_adb_rel = os.path.join("adb", binary_name)
-        default_export_rel = os.path.join("MoonReader_notes")
-        
+        # Calculate default relative paths for a portable setup        
         # Default settings dictionary, in case the json file is missing
         self.defaults = {
-            "export_dir": default_export_rel,
-            "manual_adb_path": default_adb_rel,
+            "export_dir": os.path.join("MoonReader_notes"),
+            "moonreader_books": BOOKS_DIR,
+            "manual_adb_path": ADB_REL,
             "context_chars": 400,
             "disable_context": False,
             "enable_logging": True,
@@ -86,7 +87,7 @@ class ConfigManager:
         """
         val = self.settings.get(key)
         if not val: return None
-        clean_val = val.replace("/", os.sep) if os.name == 'nt' else val
+        clean_val = val.replace("/", os.sep) if OS_WINDOWS else val
         if os.path.isabs(clean_val): return clean_val
         return os.path.abspath(os.path.join(self.script_dir, clean_val))
 
@@ -169,9 +170,9 @@ class AdbEngine:
         manual = CONFIG.get_path("manual_adb_path")
         if manual and os.path.exists(manual): return manual
         
-        binary_name = "adb.exe" if os.name == 'nt' else "adb"
-        bundled = os.path.join(SCRIPT_DIR, "adb", binary_name)
+        bundled = os.path.join(SCRIPT_DIR, ADB_REL)
         if os.path.exists(bundled): return bundled
+
         return shutil.which("adb")
 
     def run(self, args):
@@ -194,7 +195,7 @@ class AdbEngine:
 
     def build_file_cache(self, moonreader_books):
         """Indexes all files in the books directory to find 'moved' books later."""
-        if not moonreader_books: moonreader_books = "/sdcard/Books/"
+        if not moonreader_books: moonreader_books = BOOKS_DIR
         
         # Show "Indexing..." on console because it takes time, but overwrite it later
         self.logger.log(f"Indexing library files in {moonreader_books}...", overwrite=True)
