@@ -1,9 +1,11 @@
 {
     "export_dir": "MoonReader_notes",
+    "moonreader_books": "/sdcard/Books/",
     "manual_adb_path": "adb\\adb.exe",
     "context_chars": 400,
     "disable_context": false,
-    "enable_logging": false,
+    "enable_logging": true,
     "log_file": "mre.log",
-    "use_root": true
+    "use_root": true,
+    "wsa": true
 }

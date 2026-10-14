@@ -20,9 +20,13 @@ import subprocess
 import re
 import time
 import json
-import platform
 import datetime
 import warnings
+
+BOOKS_DIR = "/sdcard/Books/"
+OS_WINDOWS = os.name == 'nt'
+BINARY_NAME = "adb.exe" if OS_WINDOWS else "adb"
+ADB_REL = os.path.join("adb", BINARY_NAME)
 
 # =========================================================
 # CLASS: CONFIGURATION MANAGER
@@ -33,20 +37,18 @@ class ConfigManager:
         self.script_dir = script_dir
         self.config_path = os.path.join(script_dir, "mre.json")
         
-        # Calculate default relative paths for a portable setup
-        binary_name = "adb.exe" if os.name == 'nt' else "adb"
-        default_adb_rel = os.path.join("adb", binary_name)
-        default_export_rel = os.path.join("MoonReader_notes")
-        
+        # Calculate default relative paths for a portable setup        
         # Default settings dictionary, in case the json file is missing
         self.defaults = {
-            "export_dir": default_export_rel,
-            "manual_adb_path": default_adb_rel,
+            "export_dir": os.path.join("MoonReader_notes"),
+            "moonreader_books": BOOKS_DIR,
+            "manual_adb_path": ADB_REL,
             "context_chars": 400,
             "disable_context": False,
             "enable_logging": True,
 			"log_file": "mre.log",
-            "use_root": True
+            "use_root": True,
+            "wsa": True
         }
         self.settings = self.load()
 
@@ -85,7 +87,7 @@ class ConfigManager:
         """
         val = self.settings.get(key)
         if not val: return None
-        clean_val = val.replace("/", os.sep) if os.name == 'nt' else val
+        clean_val = val.replace("/", os.sep) if OS_WINDOWS else val
         if os.path.isabs(clean_val): return clean_val
         return os.path.abspath(os.path.join(self.script_dir, clean_val))
 
@@ -94,9 +96,9 @@ class ConfigManager:
 # =========================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = ConfigManager(SCRIPT_DIR)
-EXPORT_DIR = CONFIG.get_path("export_dir")
-TEMP_DIR = os.path.join(SCRIPT_DIR, "temp")
-HISTORY_FILE = os.path.join(EXPORT_DIR, "export_history.json") 
+EXPORT_DIR = os.path.join(CONFIG.get_path("export_dir"), f"export_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")}")  # subfolder with timestamp
+TEMP_DIR = os.path.join("sdcard/Windows" if CONFIG.get("wsa") else "", SCRIPT_DIR, "temp")  # preface with WSA shared folder path
+HISTORY_FILE = os.path.join(CONFIG.get_path("export_dir"), "export_history.json") 
 # Moon+ Reader Package IDs and Database filenames
 MOON_PACKAGES = ["com.flyersoft.moonreaderp", "com.flyersoft.moonreader"]
 DB_NAMES = ["mrbooks.db", "book_notes.db", "notes.db"]
@@ -168,9 +170,9 @@ class AdbEngine:
         manual = CONFIG.get_path("manual_adb_path")
         if manual and os.path.exists(manual): return manual
         
-        binary_name = "adb.exe" if os.name == 'nt' else "adb"
-        bundled = os.path.join(SCRIPT_DIR, "adb", binary_name)
+        bundled = os.path.join(SCRIPT_DIR, ADB_REL)
         if os.path.exists(bundled): return bundled
+
         return shutil.which("adb")
 
     def run(self, args):
@@ -193,7 +195,7 @@ class AdbEngine:
 
     def build_file_cache(self, moonreader_books):
         """Indexes all files in the books directory to find 'moved' books later."""
-        if not moonreader_books: moonreader_books = "/sdcard/Books/"
+        if not moonreader_books: moonreader_books = BOOKS_DIR
         
         # Show "Indexing..." on console because it takes time, but overwrite it later
         self.logger.log(f"Indexing library files in {moonreader_books}...", overwrite=True)
@@ -280,28 +282,83 @@ class DataExtractor:
         # METHOD 2: Backup File (.mrpro) Extraction (fallback)
         self.logger.log("INFO: Checking backup folder...", overwrite=True)
         res = self.adb.run(["shell", "ls", BACKUP_DIR])
+
         if res and res.returncode == 0:
             # Find the newest .mrpro file
-            files = [f.strip() for f in res.stdout.splitlines() if f.strip().endswith('.mrpro')]
+            files = [
+                f.strip()
+                for f in res.stdout.splitlines()
+                if f.strip().endswith(".mrpro")
+            ]
+
             if files:
                 files.sort(reverse=True)
                 latest = BACKUP_DIR + files[0]
-                self.logger.log(f"  -> Pulling backup: {latest}")
+                self.logger.log(f"  -> Pulling backup: {latest}", overwrite=True)
+
                 zip_path = local_dest + ".zip"
-                # Pull zip, extract relevant DB file
+
                 if self.adb.run(["pull", latest, zip_path]).returncode == 0:
                     try:
-                        with zipfile.ZipFile(zip_path, 'r') as z:
+                        self.logger.log(f"INFO: Reading backup archive {zip_path}", overwrite=True)
+
+                        with zipfile.ZipFile(zip_path, "r") as z:
+                            # Find the .list file one directory below the archive root.
+                            names_files = [
+                                name for name in z.namelist() if name.endswith("/_names.list")
+                            ]
+
+                            if not names_files:
+                                self.logger.log("FAILURE: _names.list file not found in backup", overwrite=True)
+                                return False
+
+                            names_file = names_files[0]
+                            archive_dir = names_file.rsplit("/", 1)[0]
+
+                            self.logger.log(f"INFO: Reading names list: {names_file}", overwrite=True)
+
+                            names = z.read(names_file).decode("utf-8-sig").splitlines()
+
+                            target_db = "com.flyersoft.moonreaderp/databases/mrbooks.db"
+
                             # .mrpro files contain .tag files which are the databases
-                            tags = [n for n in z.namelist() if n.endswith('.tag')]
-                            if tags:
-                                tags.sort(key=lambda x: z.getinfo(x).file_size, reverse=True)
-                                with open(local_dest, "wb") as f:
-                                    f.write(z.read(tags[0]))
-                                os.remove(zip_path)
-                                return True
-                    except: pass
-                    if os.path.exists(zip_path): os.remove(zip_path)
+                            # Line N in the list corresponds to N.tag.
+                            try:
+                                tag_index = next(
+                                    i + 1
+                                    for i, name in enumerate(names)
+                                    if name.strip() == target_db
+                                )
+                            except StopIteration:
+                                self.logger.log(
+                                    f"FAILURE: Database not found in _names.list: {target_db}"
+                                )
+                                return False
+
+                            tag_name = f"{archive_dir}/{tag_index}.tag"
+
+                            if tag_name not in z.namelist():
+                                self.logger.log(f"FAILURE: Tag file not found: {tag_name}")
+                                return False
+
+                            self.logger.log(f"INFO: Extracting database from {tag_name}", overwrite=True)
+
+                            with open(local_dest, "wb") as f:
+                                f.write(z.read(tag_name))
+
+                            self.logger.log(f"INFO: Database extracted to {local_dest}", overwrite=True)
+                            return True
+
+                    except (zipfile.BadZipFile, UnicodeDecodeError, OSError) as e:
+                        self.logger.log(f"FAILURE: Backup extraction error: {e}")
+
+                    finally:
+                        if os.path.exists(zip_path):
+                            safe_remove(zip_path)
+
+                else:
+                    self.logger.log("FAILURE: adb pull error")
+
         return False
 
 # =========================================================
