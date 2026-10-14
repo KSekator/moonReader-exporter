@@ -46,7 +46,8 @@ class ConfigManager:
             "disable_context": False,
             "enable_logging": True,
 			"log_file": "mre.log",
-            "use_root": True
+            "use_root": True,
+            "wsa": True
         }
         self.settings = self.load()
 
@@ -95,7 +96,7 @@ class ConfigManager:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = ConfigManager(SCRIPT_DIR)
 EXPORT_DIR = CONFIG.get_path("export_dir")
-TEMP_DIR = os.path.join(SCRIPT_DIR, "temp")
+TEMP_DIR = os.path.join("sdcard/Windows" if CONFIG.get("wsa") else "", SCRIPT_DIR, "temp")  # preface with WSA shared folder path
 HISTORY_FILE = os.path.join(EXPORT_DIR, "export_history.json") 
 # Moon+ Reader Package IDs and Database filenames
 MOON_PACKAGES = ["com.flyersoft.moonreaderp", "com.flyersoft.moonreader"]
