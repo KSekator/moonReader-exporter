@@ -282,28 +282,83 @@ class DataExtractor:
         # METHOD 2: Backup File (.mrpro) Extraction (fallback)
         self.logger.log("INFO: Checking backup folder...", overwrite=True)
         res = self.adb.run(["shell", "ls", BACKUP_DIR])
+
         if res and res.returncode == 0:
             # Find the newest .mrpro file
-            files = [f.strip() for f in res.stdout.splitlines() if f.strip().endswith('.mrpro')]
+            files = [
+                f.strip()
+                for f in res.stdout.splitlines()
+                if f.strip().endswith(".mrpro")
+            ]
+
             if files:
                 files.sort(reverse=True)
                 latest = BACKUP_DIR + files[0]
-                self.logger.log(f"  -> Pulling backup: {latest}")
+                self.logger.log(f"  -> Pulling backup: {latest}", overwrite=True)
+
                 zip_path = local_dest + ".zip"
-                # Pull zip, extract relevant DB file
+
                 if self.adb.run(["pull", latest, zip_path]).returncode == 0:
                     try:
-                        with zipfile.ZipFile(zip_path, 'r') as z:
+                        self.logger.log(f"INFO: Reading backup archive {zip_path}", overwrite=True)
+
+                        with zipfile.ZipFile(zip_path, "r") as z:
+                            # Find the .list file one directory below the archive root.
+                            names_files = [
+                                name for name in z.namelist() if name.endswith("/_names.list")
+                            ]
+
+                            if not names_files:
+                                self.logger.log("FAILURE: _names.list file not found in backup", overwrite=True)
+                                return False
+
+                            names_file = names_files[0]
+                            archive_dir = names_file.rsplit("/", 1)[0]
+
+                            self.logger.log(f"INFO: Reading names list: {names_file}", overwrite=True)
+
+                            names = z.read(names_file).decode("utf-8-sig").splitlines()
+
+                            target_db = "com.flyersoft.moonreaderp/databases/mrbooks.db"
+
                             # .mrpro files contain .tag files which are the databases
-                            tags = [n for n in z.namelist() if n.endswith('.tag')]
-                            if tags:
-                                tags.sort(key=lambda x: z.getinfo(x).file_size, reverse=True)
-                                with open(local_dest, "wb") as f:
-                                    f.write(z.read(tags[0]))
-                                os.remove(zip_path)
-                                return True
-                    except: pass
-                    if os.path.exists(zip_path): os.remove(zip_path)
+                            # Line N in the list corresponds to N.tag.
+                            try:
+                                tag_index = next(
+                                    i + 1
+                                    for i, name in enumerate(names)
+                                    if name.strip() == target_db
+                                )
+                            except StopIteration:
+                                self.logger.log(
+                                    f"FAILURE: Database not found in _names.list: {target_db}"
+                                )
+                                return False
+
+                            tag_name = f"{archive_dir}/{tag_index}.tag"
+
+                            if tag_name not in z.namelist():
+                                self.logger.log(f"FAILURE: Tag file not found: {tag_name}")
+                                return False
+
+                            self.logger.log(f"INFO: Extracting database from {tag_name}", overwrite=True)
+
+                            with open(local_dest, "wb") as f:
+                                f.write(z.read(tag_name))
+
+                            self.logger.log(f"INFO: Database extracted to {local_dest}", overwrite=True)
+                            return True
+
+                    except (zipfile.BadZipFile, UnicodeDecodeError, OSError) as e:
+                        self.logger.log(f"FAILURE: Backup extraction error: {e}")
+
+                    finally:
+                        if os.path.exists(zip_path):
+                            safe_remove(zip_path)
+
+                else:
+                    self.logger.log("FAILURE: adb pull error")
+
         return False
 
 # =========================================================
