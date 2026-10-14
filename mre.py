@@ -96,9 +96,9 @@ class ConfigManager:
 # =========================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = ConfigManager(SCRIPT_DIR)
-EXPORT_DIR = CONFIG.get_path("export_dir")
+EXPORT_DIR = os.path.join(CONFIG.get_path("export_dir"), f"export_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")}")  # subfolder with timestamp
 TEMP_DIR = os.path.join("sdcard/Windows" if CONFIG.get("wsa") else "", SCRIPT_DIR, "temp")  # preface with WSA shared folder path
-HISTORY_FILE = os.path.join(EXPORT_DIR, "export_history.json") 
+HISTORY_FILE = os.path.join(CONFIG.get_path("export_dir"), "export_history.json") 
 # Moon+ Reader Package IDs and Database filenames
 MOON_PACKAGES = ["com.flyersoft.moonreaderp", "com.flyersoft.moonreader"]
 DB_NAMES = ["mrbooks.db", "book_notes.db", "notes.db"]
